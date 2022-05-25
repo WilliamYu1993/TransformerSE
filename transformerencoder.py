@@ -3,10 +3,6 @@ from torch.nn import functional as F
 from torch.nn.modules.normalization import LayerNorm
 import pdb
 import torch
-import math
-import numpy as np
-from conv_stft import ConvSTFT, ConviSTFT, init_kernels
-from scipy.signal import get_window
 
 class Conv(nn.Module):
 
@@ -64,7 +60,7 @@ class masked_multihead_attention(nn.Module):
         return weight
         
     def forward(self,queries,keys):
-              
+        
         q = self.q_layer(queries)
         k = self.k_layer(keys)
         v = self.v_layer(keys)
@@ -84,11 +80,9 @@ class masked_multihead_attention(nn.Module):
         outputs = torch.matmul(drop_weights, v_)
         
         outputs = torch.cat(torch.split(outputs,1,dim=1),dim=-1).squeeze()
-        del q, k, v, weights        
+        
         return outputs,drop_weights
 
-        
-    
 class encoder_layer(nn.Module):
     
     def __init__(self,input_size=256, size_per_head=64, num_heads=8, dropout_rate=0.1, intermediate_size=512):
@@ -110,20 +104,18 @@ class encoder_layer(nn.Module):
         self.norm2 = LayerNorm(input_size,eps=1e-3)
         
     def forward(self,x):
-                
+        
         out,mask = self.attn(x,x)
         out = self.output1(out)
         out = self.norm1(x+out)
         interout = self.intermediate(out)
         interout = self.output2(interout)
         encoderout = self.norm2(out+interout)
-        del out, mask, x, interout
         return encoderout
     
-
-class transformerencoder_wav(nn.Module):
+class transformerencoder(nn.Module):
     def __init__(self,):
-        super(transformerencoder_wav,self).__init__()
+        super(transformerencoder, self).__init__()
 
         num_hidden_layers   = 8
         input_feature_size  = 257
@@ -141,37 +133,17 @@ class transformerencoder_wav(nn.Module):
         for i in range(num_hidden_layers):
             layer.append(encoder_layer(num_convs[-1], size_per_head, num_heads, dropout_rate, intermediate_size))
         self.encoder = nn.Sequential(*layer)
+        
         self.last_layer = nn.Sequential(
             nn.Linear(num_convs[-1],feature_size),
             nn.ReLU(),
         )
+    
+    def forward(self,x):
 
-        self.stft = ConvSTFT(512, 256, 512, 'hamming', 'real', fix=True)
-        self.istft = ConviSTFT(512, 256, 512, 'hamming', 'real', fix=True)
-
-    def STFT_inmodel(self, x):
-
-        xsp = self.stft(x)
-        mag = xsp[0]
-        phase = xsp[1]
-        feature = torch.log1p(mag)
-
-        return feature, phase
-
-    def iSTFT_inmodel(self, mag, phase):
-
-        mag = torch.expm1(mag)
-        wav = self.istft(mag,phase)
-
-        return wav
-
-    def forward(self, inwav):
-
-        x, phase = self.STFT_inmodel(inwav.squeeze(1).permute(0,1))
         x = self.first_layer(x).permute(0,2,1)
         x = self.encoder(x)
-        x = self.last_layer(x)
-        wav = self.iSTFT_inmodel(x.permute(0,2,1), phase)
-        wav = F.pad(wav, (0,inwav.shape[-1]-wav.shape[-1]), "constant", 0) 
-
-        return wav
+        x = self.last_layer(x).permute(0,2,1)
+        
+        return x
+    

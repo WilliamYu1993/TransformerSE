@@ -1,16 +1,15 @@
 CUDA_VISIBLE_DEVICES='0' python main.py \
-    --seed 7230 \
+    --seed 999 \
     --exp_dir checkpoints \
     --exp_name Exp1_Transformer_SE \
     --data_dir /mnt/2TB/user_chengyu/Corpus/noisy-vctk-16k \
     --num_workers 5 \
     --cuda \
     --log_interval 20 \
-    --batch_size 4 \
-    --learning_rate 1e-5 \
-    --num_epochs 150 \
-    --clip_grad_norm_val 10.0 \
+    --batch_size 8 \
+    --learning_rate 1e-4 \
+    --num_epochs 100 \
     --grad_accumulate_batches 1 \
     --log_grad_norm \
-    --lr_decay 0.5 \
+    --lr_decay 0 \
     --resume_dir True

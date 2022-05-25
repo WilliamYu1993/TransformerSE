@@ -7,7 +7,7 @@ from torch.nn.utils import rnn
 from torch.utils.data import DataLoader
 from conv_stft_ecocatzh import STFT
 from torch.utils.tensorboard import SummaryWriter
-from transformerencoder import transformerencoder_wav
+from transformerencoder import transformerencoder
 
 import os
 import sys
@@ -135,18 +135,19 @@ if __name__ == '__main__':
         num_workers=args.num_workers,
     )
 
-    stft = STFT(fft_len=args.nfft, win_hop=args.hop_length, win_len=args.nfft, win_type="hamming",).to(device)
-    se_net = transformerencoder_wav()
+    stft = STFT(fft_len=args.n_fft, win_hop=args.hop_length, win_len=args.n_fft, win_type="hamming",).to(device)
+    se_net = transformerencoder()
     se_net.to(device)
 
-    optimizer = optim.Adam(se_net.parameters(), lr=64**(-0.5), weight_decay=1e-7)    
+    optimizer = optim.Adam(se_net.parameters(), lr=args.learning_rate, weight_decay=args.lr_decay)    
     scheduler = None
 
     # add graph to tensorboard
     if args.add_graph:
         dummy = torch.randn(16, 1, args.hop_length * 16).to(device)
         writer.add_graph(se_net, dummy)
-
+    
+    criterion = torch.nn.L1Loss()
     start_epoch = 0
     total_loss = 0.0
     best_pesq = 0.0
@@ -160,16 +161,19 @@ if __name__ == '__main__':
             total_norm = 0.0
         se_net.zero_grad()
         for i, (noisy, clean,  _) in enumerate(pbar):
-            optimizer.zero_grad()
+                       
+            nmag, _ = stft.transform(noisy.cuda(), return_type='magphase')
+            feature = torch.log1p(nmag)
 
-            ewav = se_net(noisy.cuda())
-            emag, ephase = stft.transform(ewav, return_type='magphase')
+            espec = se_net(feature)
+            
             cmag, cphase = stft.transform(clean.cuda(), return_type='magphase')
             
-            loss = torch.nn.L1Loss()(torch.log1p(emag), torch.log1p(cmag))# + loss_wav
+            loss = criterion(espec, torch.log1p(cmag))
 
+            optimizer.zero_grad()
             loss.backward()
-            optimizer.step(epoch)
+            optimizer.step()
 
             # log metrics
             pbar_dict = OrderedDict({
@@ -207,14 +211,18 @@ if __name__ == '__main__':
             se_net.eval()
             for i, (noisy, clean, _, l) in enumerate(pbar):
 
-                ewav = se_net(noisy.cuda())
+                nmag, nphase = stft.transform(noisy.cuda(), return_type='magphase')
+                feature = torch.log1p(nmag)         
+   
+                espec = se_net(feature)
 
-                emag, ephase = stft.transform(ewav, return_type='magphase')
                 cmag, cphase = stft.transform(clean.cuda(), return_type='magphase')
             
-                loss = torch.nn.L1Loss()(torch.log1p(emag), torch.log1p(cmag))# + loss_wav
+                loss = criterion(espec, torch.log1p(cmag))
 
-                pesq_score = evaluate(ewav.cpu().squeeze().numpy(), c.cpu().squeeze().numpy(), l.cpu().numpy(), fn=cal_pesq)
+                ewav = stft.inverse(torch.expm1(espec), nphase, input_type="magphase")
+
+                pesq_score = evaluate(ewav.cpu().squeeze().numpy(), clean.cpu().squeeze().numpy(), l.cpu().numpy(), fn=cal_pesq)
                 pbar_dict = OrderedDict({
                     'val_loss': loss.item(),
                     'val_pesq': pesq_score.item(),
@@ -223,8 +231,7 @@ if __name__ == '__main__':
 
                 total_loss += loss.item()
                 total_pesq += pesq_score.item()
-                del noisy, clean, n, c, ewav, ereal, eimg, creal, cimg
-
+               
             if scheduler is not None:
                 scheduler.step(total_pesq / num_test_data)
 
